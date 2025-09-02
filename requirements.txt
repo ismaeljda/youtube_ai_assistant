@@ -1,0 +1,23 @@
+# Dépendances pour le système Multi-Agents YouTube Assistant
+
+# Core Flask
+flask==2.3.3
+flask-cors==4.0.0
+
+# LangChain et OpenAI
+langchain==0.0.354
+openai==1.3.8
+
+# YouTube Transcript
+youtube-transcript-api==0.6.1
+
+# Utilitaires
+python-dotenv==1.0.0
+requests==2.31.0
+
+# Optionnel pour de meilleures performances
+tiktoken==0.5.2
+
+# Pour le développement
+pytest==7.4.3
+black==23.11.0

@@ -1,6 +1,6 @@
 from youtube_transcript_api import YouTubeTranscriptApi
 from typing import List, Dict, Tuple
-from openai import OpenAI  # Nouvelle version OpenAI
+from openai import OpenAI
 
 class ContextualTranscriptProcessor:
     def __init__(self, api_key: str):
@@ -10,46 +10,107 @@ class ContextualTranscriptProcessor:
     def get_transcript(self, video_id: str) -> List[Dict]:
         """Récupère le transcript d'une vidéo YouTube"""
         try:
-            # Utiliser directement api.fetch qui fonctionne dans votre cas
+            print(f"🔄 Tentative de récupération du transcript pour: {video_id}")
+            
+            # Utiliser votre méthode fetch qui fonctionnait hier
             api = YouTubeTranscriptApi()
             transcript_obj = api.fetch(video_id)
             segments_data = []
             
             print(f"Debug: Type d'objet transcript: {type(transcript_obj)}")
+            print(f"Debug: Attributs disponibles: {[attr for attr in dir(transcript_obj) if not attr.startswith('_')]}")
             
+            # Essayer différentes façons d'accéder aux données
             if hasattr(transcript_obj, 'segments'):
+                print("✅ Utilisation de transcript_obj.segments")
                 for segment in transcript_obj.segments:
                     segments_data.append({
-                        'start': segment.start,
-                        'duration': segment.duration if hasattr(segment, 'duration') else 0,
-                        'text': segment.text
+                        'start': getattr(segment, 'start', 0),
+                        'duration': getattr(segment, 'duration', 0),
+                        'text': getattr(segment, 'text', '')
                     })
             elif hasattr(transcript_obj, 'entries'):
+                print("✅ Utilisation de transcript_obj.entries")
                 for entry in transcript_obj.entries:
                     segments_data.append({
-                        'start': entry.start,
-                        'duration': entry.duration if hasattr(entry, 'duration') else 0,
-                        'text': entry.text
+                        'start': getattr(entry, 'start', 0),
+                        'duration': getattr(entry, 'duration', 0),
+                        'text': getattr(entry, 'text', '')
                     })
             elif hasattr(transcript_obj, 'snippets'):
+                print("✅ Utilisation de transcript_obj.snippets")
                 for snippet in transcript_obj.snippets:
                     segments_data.append({
-                        'start': snippet.start,
-                        'duration': snippet.duration if hasattr(snippet, 'duration') else 0,
-                        'text': snippet.text
+                        'start': getattr(snippet, 'start', 0),
+                        'duration': getattr(snippet, 'duration', 0),
+                        'text': getattr(snippet, 'text', '')
                     })
+            elif hasattr(transcript_obj, 'transcript'):
+                print("✅ Utilisation de transcript_obj.transcript")
+                transcript_data = transcript_obj.transcript
+                if isinstance(transcript_data, list):
+                    for item in transcript_data:
+                        if isinstance(item, dict):
+                            segments_data.append({
+                                'start': item.get('start', 0),
+                                'duration': item.get('duration', 0),
+                                'text': item.get('text', '')
+                            })
+                        else:
+                            segments_data.append({
+                                'start': getattr(item, 'start', 0),
+                                'duration': getattr(item, 'duration', 0),
+                                'text': getattr(item, 'text', '')
+                            })
+            # Peut-être que l'objet lui-même est itérable
+            elif hasattr(transcript_obj, '__iter__'):
+                print("✅ L'objet transcript est itérable")
+                try:
+                    for item in transcript_obj:
+                        if isinstance(item, dict):
+                            segments_data.append({
+                                'start': item.get('start', 0),
+                                'duration': item.get('duration', 0),
+                                'text': item.get('text', '')
+                            })
+                        else:
+                            segments_data.append({
+                                'start': getattr(item, 'start', 0),
+                                'duration': getattr(item, 'duration', 0),
+                                'text': getattr(item, 'text', '')
+                            })
+                except Exception as iter_error:
+                    print(f"❌ Erreur lors de l'itération: {iter_error}")
             else:
-                print("Structure de transcript non reconnue:", type(transcript_obj))
-                print("Attributs disponibles:", [attr for attr in dir(transcript_obj) if not attr.startswith('_')])
-                return []
+                print("❌ Structure de transcript non reconnue")
+                # Dernière tentative: essayer d'accéder directement aux propriétés
+                try:
+                    # Peut-être que les données sont directement dans l'objet
+                    if hasattr(transcript_obj, 'start') and hasattr(transcript_obj, 'text'):
+                        segments_data.append({
+                            'start': transcript_obj.start,
+                            'duration': getattr(transcript_obj, 'duration', 0),
+                            'text': transcript_obj.text
+                        })
+                    else:
+                        print(f"❌ Impossible de décoder la structure: {type(transcript_obj)}")
+                        return []
+                except Exception as direct_error:
+                    print(f"❌ Erreur accès direct: {direct_error}")
+                    return []
             
             print(f"✅ Transcript récupéré: {len(segments_data)} segments")
+            if segments_data:
+                print(f"📝 Premier segment: {segments_data[0]}")
+                print(f"📝 Dernier segment: {segments_data[-1]}")
+            
             return segments_data
             
         except Exception as e:
-            print(f"Erreur récupération transcript: {e}")
+            print(f"❌ Erreur récupération transcript: {e}")
+            import traceback
+            traceback.print_exc()
             return []
-    
     
     def create_contextual_windows(self, transcript: List[Dict], current_time: float, 
                                 priority_window: int = 120, extended_window: int = 30) -> Dict:
