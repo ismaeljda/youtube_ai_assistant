@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube AI Assistant",
+  "version": "1.0",
+  "description": "Assistant IA pour comprendre les vidéos YouTube",
+  "permissions": [
+    "activeTab",
+    "storage"
+  ],
+  "host_permissions": [
+    "*://*.youtube.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["*://*.youtube.com/watch*"],
+      "js": ["content.js"],
+      "css": ["styles.css"]
+    }
+  ]
+}
