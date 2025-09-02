@@ -1,8 +1,7 @@
-# app.py - Backend Flask avec système Multi-Agents
+# app.py - Backend Flask avec système de mémoire
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from contextual_transcript_processor import ContextualTranscriptProcessor
-from multi_agents import MultiAgentYouTubeAssistant
+from memory_system import ContextualTranscriptProcessorWithMemory
 import os
 from dotenv import load_dotenv
 
@@ -10,14 +9,9 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)  # Permettre les requêtes depuis l'extension
 
-# Initialiser les deux systèmes
+# Initialiser le processeur avec mémoire
 API_KEY = os.getenv('OPENAI_API_KEY', 'api_key')
-
-# Système multi-agents (principal)
-multi_agent_assistant = MultiAgentYouTubeAssistant(API_KEY)
-
-# Processeur contextuel (pour récupérer les transcripts)
-transcript_processor = ContextualTranscriptProcessor(API_KEY)
+processor = ContextualTranscriptProcessorWithMemory(API_KEY)
 
 @app.route('/ask', methods=['POST'])
 def ask_question():
@@ -35,11 +29,13 @@ def ask_question():
         video_id = data.get("video_id")
         current_time = data.get("current_time", 0)
         question = data.get("question")
+        user_id = data.get("user_id", "browser_session")  # ID utilisateur pour la session
 
         print("✅ Paramètres extraits:")
         print(f"   - video_id: '{video_id}' (type: {type(video_id)})")
         print(f"   - current_time: {current_time} (type: {type(current_time)})")
         print(f"   - question: '{question}' (type: {type(question)})")
+        print(f"   - user_id: '{user_id}'")
 
         # Validation
         if not video_id or not question:
@@ -50,46 +46,35 @@ def ask_question():
                 "received_question": question
             }), 400
 
-        # 1. Récupérer le transcript via le processeur contextuel
-        transcript = transcript_processor.get_transcript(video_id)
-        if not transcript:
+        # Traitement avec mémoire
+        result = processor.ask_question_with_memory(video_id, current_time, question, user_id)
+
+        # Vérifier s'il y a une erreur
+        if "error" in result:
             return jsonify({
-                "error": "Impossible de récupérer le transcript de cette vidéo",
+                "error": result["error"],
                 "video_id": video_id
-            }), 404
-
-        # 2. Créer les fenêtres contextuelles
-        contextual_data = transcript_processor.create_contextual_windows(transcript, current_time)
-
-        # 3. Traitement via le système multi-agents
-        result = multi_agent_assistant.process_question(question, contextual_data)
+            }), 500
 
         # Log de l'analyse
-        print("✅ Analyse multi-agents terminée:")
-        print(f"   - Type de question: {result['analysis'].get('question_type', 'unknown')}")
-        print(f"   - Stratégie: {result['analysis'].get('context_strategy', 'unknown')}")
-        print(f"   - Style: {result['analysis'].get('response_style', 'unknown')}")
-        print(f"   - Confiance: {result['analysis'].get('confidence', 0)}")
-        print(f"   - Contexte utilisé: {result.get('context_used', 0)} segments")
+        print("✅ Question traitée avec mémoire:")
+        print(f"   - Historique présent: {result.get('has_conversation_history', False)}")
+        print(f"   - Longueur conversation: {result.get('conversation_length', 0)}")
+
+        # Stats mémoire
+        memory_stats = processor.get_conversation_stats()
+        print(f"📊 Stats mémoire: {memory_stats}")
 
         return jsonify({
             "response": result.get("response", ""),
             "video_id": video_id,
             "timestamp": current_time,
-            "analysis": {
-                "question_type": result["analysis"].get("question_type", "unknown"),
-                "strategy": result["analysis"].get("context_strategy", "unknown"),
-                "style": result["analysis"].get("response_style", "unknown"),
-                "confidence": result["analysis"].get("confidence", 0),
-                "keywords": result["analysis"].get("keywords", []),
-                "reasoning": result["analysis"].get("reasoning", "")
+            "memory": {
+                "has_history": result.get("has_conversation_history", False),
+                "conversation_length": result.get("conversation_length", 0),
+                "session_stats": memory_stats
             },
-            "metadata": {
-                "timestamp": result.get("timestamp", ""),
-                "context_segments": result.get("context_used", 0),
-                "processing_time": result.get("processing_time", "N/A")
-            },
-            "debug_info": f"Multi-agent: {result['analysis'].get('question_type', 'unknown')} question processed with {result['analysis'].get('context_strategy', 'unknown')} strategy"
+            "debug_info": f"Mémoire: {result.get('conversation_length', 0)} messages en historique"
         })
 
     except Exception as e:
@@ -105,7 +90,7 @@ def ask_question():
 @app.route('/ask/simple', methods=['POST'])
 def ask_question_simple():
     """
-    Endpoint alternatif utilisant l'ancien système (pour comparaison)
+    Endpoint alternatif SANS mémoire (pour comparaison)
     """
     try:
         data = request.get_json(force=True, silent=True) or {}
@@ -118,14 +103,14 @@ def ask_question_simple():
                 "error": "video_id et question sont requis"
             }), 400
 
-        # Utiliser l'ancien système contextuel simple
-        result = transcript_processor.ask_question(video_id, current_time, question)
+        # Utiliser la méthode sans mémoire du processeur
+        result = processor.transcript_processor.ask_question(video_id, current_time, question)
 
         return jsonify({
             "response": result,
             "video_id": video_id,
             "timestamp": current_time,
-            "system": "simple_contextual"
+            "system": "simple_sans_memoire"
         })
 
     except Exception as e:
@@ -136,11 +121,73 @@ def ask_question_simple():
         }), 500
 
 
+@app.route('/conversation/clear/<video_id>', methods=['POST'])
+def clear_conversation(video_id):
+    """Efface l'historique de conversation pour une vidéo"""
+    try:
+        data = request.get_json() or {}
+        user_id = data.get("user_id", "browser_session")
+        
+        processor.clear_conversation(video_id, user_id)
+        
+        return jsonify({
+            "success": True,
+            "message": f"Conversation effacée pour la vidéo {video_id}",
+            "video_id": video_id
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "error": str(e)
+        }), 500
+
+
+@app.route('/conversation/history/<video_id>', methods=['GET'])
+def get_conversation_history(video_id):
+    """Récupère l'historique de conversation pour une vidéo"""
+    try:
+        user_id = request.args.get('user_id', 'browser_session')
+        history = processor.memory.get_conversation_history(video_id, user_id)
+        
+        return jsonify({
+            "video_id": video_id,
+            "user_id": user_id,
+            "history": history,
+            "message_count": len(history)
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "error": str(e)
+        }), 500
+
+
+@app.route('/memory/stats', methods=['GET'])
+def get_memory_stats():
+    """Statistiques du système de mémoire"""
+    try:
+        stats = processor.get_conversation_stats()
+        
+        # Nettoyer les sessions expirées
+        cleaned_count = processor.memory.cleanup_expired_sessions()
+        
+        return jsonify({
+            "stats": stats,
+            "cleaned_expired_sessions": cleaned_count,
+            "status": "ok"
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "error": str(e)
+        }), 500
+
+
 @app.route('/transcript/<video_id>', methods=['GET'])
 def get_transcript_info(video_id):
     """Endpoint pour récupérer des infos sur le transcript"""
     try:
-        transcript = transcript_processor.get_transcript(video_id)
+        transcript = processor.transcript_processor.get_transcript(video_id)
         
         if not transcript:
             return jsonify({
@@ -160,66 +207,46 @@ def get_transcript_info(video_id):
             'details': str(e)
         }), 500
 
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Endpoint de santé"""
-    return jsonify({
-        'status': 'ok',
-        'service': 'YouTube AI Assistant API',
-        'systems': {
-            'multi_agent': 'available',
-            'simple_contextual': 'available',
-            'transcript_processor': 'available'
-        }
-    })
-
-@app.route('/debug/analyze', methods=['POST'])
-def debug_analyze():
-    """
-    Endpoint de debug pour tester uniquement l'analyseur de questions
-    """
     try:
-        data = request.get_json()
-        question = data.get("question", "")
-        
-        if not question:
-            return jsonify({"error": "Question requise"}), 400
-        
-        # Données contextuelles de test
-        test_context = {
-            'current_time_formatted': '05:30',
-            'priority_window_text': '[05:25] Exemple de contexte prioritaire...',
-            'extended_context_summary': 'Exemple de contexte étendu...'
-        }
-        
-        # Analyser seulement
-        analysis = multi_agent_assistant.analyze_question(question, test_context)
+        memory_stats = processor.get_conversation_stats()
         
         return jsonify({
-            'question': question,
-            'analysis': analysis
+            'status': 'ok',
+            'service': 'YouTube AI Assistant API avec Mémoire',
+            'memory': memory_stats,
+            'features': {
+                'conversation_memory': 'enabled',
+                'session_timeout': '30 minutes',
+                'max_messages_per_session': 10
+            }
         })
-        
     except Exception as e:
         return jsonify({
+            'status': 'error',
             'error': str(e)
         }), 500
 
+
 if __name__ == '__main__':
     # Vérifier la clé API
-    print("🚀 Démarrage du serveur backend avec système Multi-Agents...")
+    print("🚀 Démarrage du serveur backend avec système de MÉMOIRE...")
     print("📝 Endpoints disponibles:")
-    print("   POST /ask - Poser une question (multi-agents)")
-    print("   POST /ask/simple - Poser une question (système simple)")
+    print("   POST /ask - Poser une question (AVEC mémoire)")
+    print("   POST /ask/simple - Poser une question (SANS mémoire)")
+    print("   POST /conversation/clear/<video_id> - Effacer l'historique")
+    print("   GET /conversation/history/<video_id> - Voir l'historique")
+    print("   GET /memory/stats - Statistiques mémoire")
     print("   GET /transcript/<video_id> - Info sur le transcript")
-    print("   POST /debug/analyze - Debug de l'analyseur")
     print("   GET /health - Status du serveur")
-    
-    # Vérifier les dépendances
-    try:
-        from langchain.chat_models import ChatOpenAI
-        print("✅ LangChain disponible")
-    except ImportError:
-        print("❌ LangChain non installé. Installez avec: pip install langchain openai")
+    print()
+    print("🧠 Fonctionnalités mémoire:")
+    print("   ✅ Se souvient des conversations précédentes par vidéo")
+    print("   ✅ Timeout de session: 30 minutes")
+    print("   ✅ Maximum 10 messages par session")
+    print("   ✅ Nettoyage automatique des sessions expirées")
     
     app.run(debug=True, port=5000, use_reloader=False)
